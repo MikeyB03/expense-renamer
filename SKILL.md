@@ -1,17 +1,17 @@
 ---
 name: document-renamer
-description: Rename expense and bank statement PDFs using AI extraction. Expenses are renamed to VendorName_Date.pdf, bank statements to BankName_StartDate_EndDate.pdf. Optionally matches expenses against an Excel file and marks them as uploaded. Automatically skips SprintPoint invoices (outgoing). Use when organizing financial documents, renaming expenses/receipts, or processing bank statements.
+description: Rename expense and bank statement PDFs using AI extraction. Expenses are renamed to VendorName_Date.pdf and moved to monthly folders (e.g., "10 October"). Bank statements are renamed to BankName_StartDate_EndDate.pdf. Optionally matches expenses against an Excel file and marks them as uploaded. Automatically skips SprintPoint invoices (outgoing). Use when organizing financial documents, renaming expenses/receipts, or processing bank statements.
 ---
 
 # Document Renamer
 
 Renames PDFs based on document type using AI extraction:
 
-- **Expenses/Receipts** → `VendorName_YYYY-MM-DD.pdf`
+- **Expenses/Receipts** → `VendorName_YYYY-MM-DD.pdf` → moved to monthly folder (e.g., `10 October/`)
 - **Bank Statements** → `BankName_YYYY-MM-DD_YYYY-MM-DD.pdf` (date range)
 - **SprintPoint Invoices** → Skipped (outgoing invoices)
 
-Optionally matches expenses against an Excel file and marks them as "Yes" in the Uploaded column.
+Expenses are automatically moved to monthly subfolders based on their date. Optionally matches expenses against an Excel file and marks them as "Yes" in the Uploaded column.
 
 ## Usage
 
@@ -59,6 +59,7 @@ Processing: V02394802112_2025-10-04.pdf
   Vendor: EE
   Date: 2025-10-04
   New name: EE_2025-10-04.pdf
+  Moved to: 10 October/EE_2025-10-04.pdf
 
 Processing: 20251003_91673173.pdf
   Type: Bank Statement
@@ -81,8 +82,8 @@ Matched 1 expense(s) in Excel file
 
 ## Supported Document Types
 
-| Type | Naming Format | Example |
-|------|---------------|---------|
-| Bank Statement | `Bank_StartDate_EndDate.pdf` | `HSBC_2025-09-04_2025-10-03.pdf` |
-| Expense | `Vendor_Date.pdf` | `EE_2025-10-04.pdf` |
-| SprintPoint Invoice | Skipped | - |
+| Type | Naming Format | Folder | Example |
+|------|---------------|--------|---------|
+| Expense | `Vendor_Date.pdf` | `MM MonthName/` | `10 October/EE_2025-10-04.pdf` |
+| Bank Statement | `Bank_StartDate_EndDate.pdf` | (stays in place) | `HSBC_2025-09-04_2025-10-03.pdf` |
+| SprintPoint Invoice | Skipped | - | - |

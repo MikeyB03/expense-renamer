@@ -27,8 +27,10 @@ import os
 import re
 import sys
 import json
+import shutil
 import argparse
 from pathlib import Path
+from datetime import datetime
 from typing import Optional, Tuple, Dict, Any, List
 
 try:
@@ -182,6 +184,71 @@ def get_unique_filename(folder: Path, base_name: str, extension: str) -> str:
             raise ValueError(f"Too many duplicates for {base_name}")
 
 
+def get_month_folder_name(date_str: str) -> str:
+    """
+    Convert a date string to a month folder name like '10 October'.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+
+    Returns:
+        Folder name like '01 January', '10 October', '12 December'
+    """
+    try:
+        date = datetime.strptime(date_str, "%Y-%m-%d")
+        month_num = date.strftime("%m")  # Zero-padded month number
+        month_name = date.strftime("%B")  # Full month name
+        return f"{month_num} {month_name}"
+    except ValueError:
+        return None
+
+
+def move_to_month_folder(file_path: Path, date_str: str, dry_run: bool = False) -> Optional[Path]:
+    """
+    Move a file to the appropriate monthly folder based on date.
+    Creates the folder if it doesn't exist.
+
+    Args:
+        file_path: Path to the file to move
+        date_str: Date in YYYY-MM-DD format
+        dry_run: If True, don't actually move the file
+
+    Returns:
+        New path if moved successfully, None otherwise
+    """
+    month_folder = get_month_folder_name(date_str)
+    if not month_folder:
+        return None
+
+    # Create the month folder path
+    dest_folder = file_path.parent / month_folder
+    dest_path = dest_folder / file_path.name
+
+    if dry_run:
+        print(f"  Would move to: {month_folder}/{file_path.name}")
+        return dest_path
+
+    # Create folder if it doesn't exist
+    dest_folder.mkdir(exist_ok=True)
+
+    # Handle if destination file already exists
+    if dest_path.exists():
+        # Get unique filename in destination folder
+        base_name = file_path.stem
+        extension = file_path.suffix
+        unique_name = get_unique_filename(dest_folder, base_name, extension)
+        dest_path = dest_folder / unique_name
+
+    # Move the file
+    try:
+        shutil.move(str(file_path), str(dest_path))
+        print(f"  Moved to: {month_folder}/{dest_path.name}")
+        return dest_path
+    except Exception as e:
+        print(f"  Warning: Failed to move file: {e}")
+        return None
+
+
 def process_document(pdf_path: Path, dry_run: bool = False) -> Tuple[bool, str, Optional[Dict]]:
     """
     Process a single PDF and rename it based on document type.
@@ -252,16 +319,30 @@ def process_document(pdf_path: Path, dry_run: bool = False) -> Tuple[bool, str, 
     new_path = pdf_path.parent / new_filename
 
     if pdf_path.name == new_filename:
+        # File already correctly named, but still move expenses to monthly folder
+        if doc_type == "expense":
+            date = doc_info.get("date")
+            move_to_month_folder(pdf_path, date, dry_run)
         return True, "Already correctly named", expense_info
 
     print(f"  New name: {new_filename}")
 
     if dry_run:
+        # Show what would happen
+        if doc_type == "expense":
+            date = doc_info.get("date")
+            move_to_month_folder(pdf_path.parent / new_filename, date, dry_run)
         return True, f"Would rename to: {new_filename}", expense_info
 
     # Rename the file
     try:
         pdf_path.rename(new_path)
+
+        # Move expenses to monthly folder
+        if doc_type == "expense":
+            date = doc_info.get("date")
+            move_to_month_folder(new_path, date, dry_run)
+
         return True, f"Renamed to: {new_filename}", expense_info
     except Exception as e:
         return False, f"Failed to rename: {e}", None
