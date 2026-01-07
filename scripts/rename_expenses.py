@@ -91,6 +91,7 @@ FIRST, determine the document type:
 1. "bank_statement" - A bank statement showing account transactions over a period
 2. "expense" - A receipt, bill, or invoice FROM another company (expense to be paid/already paid)
 3. "sprintpoint_invoice" - An invoice issued BY SprintPoint Ltd (outgoing invoice)
+4. "incoming_invoice" - An invoice TO SprintPoint Ltd for services rendered (e.g., from TalentHawk, contractors)
 
 THEN extract the relevant information:
 
@@ -107,12 +108,19 @@ For EXPENSES:
 For SPRINTPOINT INVOICES:
 - Just identify it as type "sprintpoint_invoice"
 
+For INCOMING INVOICES (invoices TO SprintPoint for payment):
+- vendor: The company that issued the invoice (e.g., "TalentHawk", "Talent Hawk Limited")
+- invoice_number: The invoice number/reference
+- amount: The total amount (just the number, e.g., 21841.25)
+- date: The invoice date in YYYY-MM-DD format
+
 Return ONLY a JSON object:
 {{
-  "document_type": "bank_statement" | "expense" | "sprintpoint_invoice",
+  "document_type": "bank_statement" | "expense" | "sprintpoint_invoice" | "incoming_invoice",
   // Include relevant fields based on type:
   // For bank_statement: "bank_name", "start_date", "end_date"
   // For expense: "vendor", "date"
+  // For incoming_invoice: "vendor", "invoice_number", "amount", "date"
 }}
 
 Document text:
@@ -249,11 +257,12 @@ def move_to_month_folder(file_path: Path, date_str: str, dry_run: bool = False) 
         return None
 
 
-def process_document(pdf_path: Path, dry_run: bool = False) -> Tuple[bool, str, Optional[Dict]]:
+def process_document(pdf_path: Path, dry_run: bool = False, excel_path: Optional[Path] = None) -> Tuple[bool, str, Optional[Dict]]:
     """
     Process a single PDF and rename it based on document type.
     Returns (success, message, expense_info).
     expense_info contains vendor and date for expense documents (for Excel matching).
+    For incoming invoices, excel_path is required to match by amount and get payment date.
     """
     print(f"\nProcessing: {pdf_path.name}")
 
@@ -272,6 +281,40 @@ def process_document(pdf_path: Path, dry_run: bool = False) -> Tuple[bool, str, 
     if doc_type == "sprintpoint_invoice":
         print(f"  Type: SprintPoint Invoice (skipping)")
         return True, "Skipped (SprintPoint invoice)", None
+
+    elif doc_type == "incoming_invoice":
+        vendor = doc_info.get("vendor", "Unknown")
+        invoice_number = doc_info.get("invoice_number", "")
+        amount = doc_info.get("amount")
+        invoice_date = doc_info.get("date", "")
+
+        print(f"  Type: Incoming Invoice")
+        print(f"  Vendor: {vendor}")
+        print(f"  Invoice: {invoice_number}")
+        print(f"  Amount: {amount}")
+
+        if not amount:
+            return False, "Could not extract invoice amount", None
+
+        try:
+            amount_float = float(amount)
+        except (ValueError, TypeError):
+            return False, f"Invalid amount format: {amount}", None
+
+        if not excel_path:
+            return False, "Excel file required for invoice matching (use --excel)", None
+
+        # Match invoice to Excel by amount to get payment date
+        match_result = match_invoice_to_excel(excel_path, amount_float, dry_run)
+
+        if not match_result:
+            return False, f"No matching payment found for amount {amount}", None
+
+        # Move to monthly folder based on payment date (from Excel)
+        payment_date = match_result['payment_date']
+        move_to_month_folder(pdf_path, payment_date, dry_run)
+
+        return True, f"Invoice matched and moved", None
 
     elif doc_type == "bank_statement":
         bank_name = doc_info.get("bank_name")
@@ -428,6 +471,69 @@ def match_expenses_to_excel(excel_path: Path, expenses: List[Dict], dry_run: boo
     return len(matches)
 
 
+def match_invoice_to_excel(excel_path: Path, amount: float, dry_run: bool = False) -> Optional[Dict]:
+    """
+    Match an invoice by exact amount to a credit entry in Excel.
+    Returns the matched row info including payment date, or None if no match.
+    Marks the row as 'Uploaded: Yes' if matched.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        print("Error: pandas is required for Excel matching. Install with: pip install pandas openpyxl")
+        return None
+
+    if not excel_path.exists():
+        print(f"  Error: Excel file not found: {excel_path}")
+        return None
+
+    # Read the Excel file
+    df = pd.read_excel(excel_path)
+
+    # Check if required columns exist
+    if 'Amount' not in df.columns:
+        print("  Error: Excel file must have an 'Amount' column")
+        return None
+    if 'Date' not in df.columns:
+        print("  Error: Excel file must have a 'Date' column")
+        return None
+    if 'Uploaded' not in df.columns:
+        df['Uploaded'] = None
+
+    # Look for exact amount match (positive amounts = credits/incoming)
+    # Use a small tolerance for floating point comparison
+    tolerance = 0.01
+    for idx, row in df.iterrows():
+        row_amount = float(row['Amount']) if pd.notna(row['Amount']) else 0
+        # Match positive amounts (credits) with the invoice amount
+        if abs(row_amount - amount) < tolerance and row_amount > 0:
+            try:
+                payment_date = pd.Timestamp(row['Date'])
+                payment_date_str = payment_date.strftime('%Y-%m-%d')
+            except:
+                continue
+
+            description = str(row.get('Description', ''))
+
+            print(f"  Matched to: {description[:40]}... ({payment_date_str})")
+
+            if not dry_run:
+                # Mark as uploaded
+                df.at[idx, 'Uploaded'] = 'Yes'
+                df.to_excel(excel_path, index=False)
+                print(f"  Excel updated: Uploaded = Yes")
+
+            return {
+                'excel_idx': idx,
+                'payment_date': payment_date_str,
+                'description': description,
+                'amount': row_amount
+            }
+
+    print(f"  No matching credit found for amount: {amount}")
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Rename PDFs based on document type (expenses, bank statements) using AI extraction"
@@ -477,8 +583,11 @@ def main():
     fail_count = 0
     processed_expenses = []
 
+    # Get excel path if provided (needed for invoice matching)
+    excel_path = Path(args.excel).expanduser().resolve() if args.excel else None
+
     for pdf_path in sorted(pdf_files):
-        success, message, expense_info = process_document(pdf_path, args.dry_run)
+        success, message, expense_info = process_document(pdf_path, args.dry_run, excel_path)
         if success:
             success_count += 1
             if expense_info:
@@ -494,11 +603,10 @@ def main():
         print("(Dry run - no files were actually renamed)")
 
     # Match expenses against Excel if provided
-    if args.excel and processed_expenses:
-        excel_path = Path(args.excel).expanduser().resolve()
+    if excel_path and processed_expenses:
         match_count = match_expenses_to_excel(excel_path, processed_expenses, args.dry_run)
         print(f"Matched {match_count} expense(s) in Excel file")
-    elif args.excel and not processed_expenses:
+    elif excel_path and not processed_expenses:
         print("\nNo expenses to match against Excel file")
 
 
