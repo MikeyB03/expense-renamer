@@ -526,7 +526,7 @@ def auto_mark_no_receipt_entries(excel_path: Path, dry_run: bool = False) -> int
     if not excel_path.exists():
         return 0
 
-    # Keywords that indicate entries that don't need receipts
+    # Keywords that indicate entries that don't need receipts (mark as NA)
     no_receipt_keywords = [
         'ACCOUNT IT',
         'ACCOUNTING IT',
@@ -540,6 +540,8 @@ def auto_mark_no_receipt_entries(excel_path: Path, dry_run: bool = False) -> int
         'PAYE',
         'PENSION',
         'TAX',
+        'NON-STERLING',  # Non-sterling transaction fees
+        'NON STERLING',
     ]
 
     df = pd.read_excel(excel_path)
@@ -553,8 +555,8 @@ def auto_mark_no_receipt_entries(excel_path: Path, dry_run: bool = False) -> int
     marked_entries = []
 
     for idx, row in df.iterrows():
-        # Skip if already marked
-        if pd.notna(row.get('Uploaded')) and row['Uploaded'] == 'Yes':
+        # Skip if already marked as - (not applicable)
+        if pd.notna(row.get('Uploaded')) and row['Uploaded'] == '-':
             continue
 
         desc = str(row.get('Description', '')).upper()
@@ -562,26 +564,29 @@ def auto_mark_no_receipt_entries(excel_path: Path, dry_run: bool = False) -> int
         # Check if any keyword matches
         for keyword in no_receipt_keywords:
             if keyword in desc:
+                # Also fix entries incorrectly marked as 'Yes' that should be 'NA'
+                current_value = row.get('Uploaded')
                 marked_entries.append({
                     'idx': idx,
                     'desc': row['Description'],
-                    'keyword': keyword
+                    'keyword': keyword,
+                    'was_yes': pd.notna(current_value) and current_value == 'Yes'
                 })
                 break
 
     if marked_entries:
         print(f"\n{'='*50}")
-        print(f"Auto-marking entries that don't require receipts:")
+        print(f"Auto-marking entries that don't require receipts (NA):")
 
         for entry in marked_entries:
             print(f"  [{entry['keyword']}] {entry['desc'][:50]}...")
             if not dry_run:
-                df.at[entry['idx'], 'Uploaded'] = 'Yes'
+                df.at[entry['idx'], 'Uploaded'] = '-'
             marked_count += 1
 
         if not dry_run:
             df.to_excel(excel_path, index=False)
-            print(f"\nMarked {marked_count} entries as 'Uploaded: Yes'")
+            print(f"\nMarked {marked_count} entries as '-' (not applicable)")
         else:
             print(f"\n(Dry run - would mark {marked_count} entries)")
 
