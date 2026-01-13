@@ -1,9 +1,9 @@
 ---
-name: document-renamer
+name: expense-processor
 description: Rename and organize expense, invoice, and bank statement PDFs using AI extraction. Expenses are renamed to VendorName_Date.pdf and moved to monthly folders. Incoming invoices (e.g., TalentHawk) are matched by amount against Excel and moved to folders based on payment date. Bank statements are renamed to BankName_StartDate_EndDate.pdf. Optionally matches against Excel and marks as uploaded. Use when organizing financial documents.
 ---
 
-# Document Renamer
+# Expense Processor
 
 Processes PDFs based on document type using AI extraction:
 
